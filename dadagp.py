@@ -252,6 +252,10 @@ def is_b6standard(strdiff):
     return strdiff == [-5, -5, -5, -5, -5]
 def is_b4drop(strdiff):
     return strdiff == [-5, -5, -7]
+def is_b5drop(strdiff):
+    """5-string Drop D bass: A1-D2-A2-D3-G3 (MIDI 33-38-45-50-55).
+    strdiff intervals from lowest to highest string. Accepts both string orderings."""
+    return strdiff == [-5, -5, -7, -5] or strdiff == [-5, -5, -5, -7]
 
 # Returns a string describing the tuning type
 def get_tuning_type(instrument_group, strings):
@@ -266,6 +270,8 @@ def get_tuning_type(instrument_group, strings):
             return "b6_standard"
         elif is_b4drop(strdiff): 
             return "b4_drop"
+        elif is_b5drop(strdiff):
+            return "b5_drop"
     else:
         if is_g6standard(strdiff): 
             return "g6_standard"
@@ -288,7 +294,7 @@ def is_good_bass_tuning(strings):
     if(len(strings)==6):
         return is_b6standard(strdiff)
     elif(len(strings)==5):
-        return is_b5standard(strdiff)
+        return is_b5standard(strdiff) or is_b5drop(strdiff)
     elif(len(strings)==4):
         return is_b4standard(strdiff) or is_b4drop(strdiff)
     else:
@@ -344,11 +350,24 @@ def roundtempo(tempo):
 # It's important, for resolving token contradictions, that I use the the format measure_name[_params]
 # because there should only be one each of "measure_name" token per measure. 
 def get_measure_tokens(measure):
+    """Return the list of structural tokens that begin a measure.
+
+    Includes the mandatory ``new_measure`` token plus optional tokens for
+    repeat markers, time-signature changes, triplet feel, and (extension)
+    section/rehearsal markers.
+    """
     measure_tokens = ["new_measure"]
     #if(measure.tempo):
     #    measure_tokens.append("tempo:%s" % roundtempo(measure.tempo.value))
     # measure tempo is fucked and buggy, you should really look at beatEffect.mixTableChange.tempo
     header = measure.header
+    # === EXTENSION: Section Label Token ===
+    # Guitar Pro rehearsal marks (Intro, Verse, Chorus, etc.) become [SECTION:name] tokens
+    # placed at the very beginning of the measure, right after new_measure.
+    if header.marker:
+        section_name = header.marker.title.strip().replace(" ", "_")
+        if section_name:
+            measure_tokens.append("[SECTION:%s]" % section_name)
     if(header.tripletFeel.value>0):
         measure_tokens.append("measure:triplet_feel:%s" % header.tripletFeel.value)
     if(header.isRepeatOpen):
@@ -901,6 +920,12 @@ def get_fret(note, track, pitch_shift):
         if tuning=="b4_drop":
             if string==4:
                 drop_shift = 2
+        elif tuning=="b5_drop":
+            # 5-string Drop D bass: lowest string (string 5 after renumbering) is Drop D
+            # In token format 4-string basses are renumbered +1, so b5 uses strings 2-6
+            # The drop string is string 5 (original string 4 in GP, becomes string 5 in tokens)
+            if string==5 or string==6:
+                drop_shift = 2
     else: 
         # everything else is treated like a guitar
         if tuning=="g6_drop" or tuning=="g7_drop":
@@ -1038,6 +1063,7 @@ def guitarpro2tokens(song, artist, verbose=False):
     # Verify support TUNING
     downtunages = []
     tuning_types = {} # keep tracking of tuning types
+    bass_raw_downtunage = None  # separately tracked for bass octave offset calculation
 
     for t,track in enumerate(song.tracks):
         midinumber = track.channel.instrument
@@ -1051,7 +1077,9 @@ def guitarpro2tokens(song, artist, verbose=False):
             downtunages.append(guitar_downtunage(strings))
         elif(group_name=="bass"):
             assert is_good_bass_tuning(strings), "Error: Track %s has unsupported bass tuning: %s" % (t," ".join(strings))
-            downtunages.append(bass_downtunage(strings))
+            bd = bass_downtunage(strings)
+            downtunages.append(bd)
+            bass_raw_downtunage = bd  # save for bass_offset calculation
         elif(group_name=="pads" or group_name=="leads"):
             assert is_good_guitar_tuning(strings), "Error: Track %s has unsupported pads/leads tuning: %s" % (t," ".join(strings))
             downtunages.append(guitar_downtunage(strings))
@@ -1068,13 +1096,21 @@ def guitarpro2tokens(song, artist, verbose=False):
     # if downtunages are different, but mod 12 equivalent, then choose the pitch closest to zero.
     # Note: Whatever -12 pitchshift there was just gets shifted to 0. That instrument may change octave. 
     # Find the pitch closest to zero by sorting
-    downtunages.sort(key = lambda x: abs(int(x)))
-    if(len(downtunages)==0):
+    downtunages_sorted = sorted(downtunages, key = lambda x: abs(int(x)))
+    if(len(downtunages_sorted)==0):
         pitch_shift = 0
     else:
-        pitch_shift = downtunages[0] 
+        pitch_shift = downtunages_sorted[0] 
     verbose and print("Pitch Shift:", pitch_shift)
     verbose and print(tuning_types)
+
+    # Bass octave offset: captures cases where bass is at a different octave than the
+    # common pitch_shift would suggest (e.g., 5-string drop D tuned one octave higher).
+    # This offset is stored in the token stream so the decoder can reconstruct the exact tuning.
+    bass_offset = 0
+    if bass_raw_downtunage is not None:
+        bass_offset = bass_raw_downtunage - pitch_shift
+    verbose and print("Bass offset:", bass_offset)
     
     #############################################
     # CONDITIONING
@@ -1087,7 +1123,35 @@ def guitarpro2tokens(song, artist, verbose=False):
 
     downtune_token = "downtune:%s" % pitch_shift
 
-    head_tokens = [artist, downtune_token, tempo_token, "start"]
+    # === EXTENSION: Song Metadata Tokens ===
+    # Song-level metadata before the main token sequence.
+    # These tokens are optional — decoders that don't understand them should skip unknown [KEY:...] lines.
+    metadata_tokens = []
+    if song.title:
+        metadata_tokens.append("[TITLE:%s]" % song.title.replace("\n", " ").strip())
+    if artist and artist != "unknown":
+        metadata_tokens.append("[ARTIST:%s]" % artist.replace("\n", " ").strip())
+    metadata_tokens.append("[BPM:%s]" % song.tempo)
+    if bass_offset != 0:
+        # Store the bass octave offset so the decoder can reconstruct exact bass tuning.
+        # Without this, basses tuned an octave higher than standard produce notes 12 semitones
+        # off in the decoded GP5 file.
+        metadata_tokens.append("[BASS_OFFSET:%s]" % bass_offset)
+
+    # === EXTENSION: Track Name Tokens ===
+    # Preserve the original GP track names so round-trips retain human-readable names.
+    # Format: [TRACK_NAME:instrument_prefix:original_name]
+    # Placed after 'start', before the first new_measure.
+    track_name_tokens = []
+    for t, track in enumerate(song.tracks):
+        if get_instrument_group(track) == "remove":
+            continue
+        prefix = get_instrument_token_prefix(track, tracks_by_group)
+        if prefix and track.name:
+            safe_name = track.name.replace("\n", " ").strip()
+            track_name_tokens.append("[TRACK_NAME:%s:%s]" % (prefix, safe_name))
+
+    head_tokens = metadata_tokens + [artist, downtune_token, tempo_token, "start"] + track_name_tokens
     
     verbose and print("=========\nHead tokens")
     verbose and print(head_tokens)
@@ -1341,18 +1405,66 @@ assert new_track.strings[0].value==62
 
 # Given a list of tokens, constructs a guitarpro song object
 def tokens2guitarpro(all_tokens, verbose=False):
-    # Interpret a token list back into a GP song file
-    ## TODO: some kinda validation/flexibility for weird files the net generates?
-    ## For now let's just support valid dataset files 
-    head = all_tokens[:4]
-    body = all_tokens[4:]
-    artist_token = head[0] 
-    assert head[1].split(":")[0]=="downtune"
-    assert head[2].split(":")[0]=="tempo"
-    assert head[3]=="start"
+    """Convert a flat token list back into a guitarpro Song object.
+
+    Supports both the original DadaGP v1.1 token format and the extended
+    metal-extensions format with [TITLE:...], [ARTIST:...], [BPM:...],
+    [BASS_OFFSET:...], [TRACK_NAME:...], and [SECTION:...] tokens.
+    All bracket tokens are backward-compatible: they are silently skipped
+    when decoding files that do not expect them.
+    """
+    # === EXTENSION: Robust head parsing ===
+    # Old format:  artist, downtune:N, tempo:N, start, ...
+    # New format:  [TITLE:...], [ARTIST:...], [BPM:...], [BASS_OFFSET:N],
+    #              artist, downtune:N, tempo:N, start, [TRACK_NAME:...]+, ...
+    # Scan forward to find the mandatory downtune/tempo/start tokens.
+    metadata = {}   # collected [KEY:value] tokens before the main sequence
+    track_names = {}  # prefix -> track name from [TRACK_NAME:prefix:name]
+
+    # Strip leading metadata tokens
+    idx = 0
+    while idx < len(all_tokens) and all_tokens[idx].startswith("["):
+        tok = all_tokens[idx]
+        if tok.startswith("[TITLE:") and tok.endswith("]"):
+            metadata["title"] = tok[7:-1]
+        elif tok.startswith("[ARTIST:") and tok.endswith("]"):
+            metadata["artist"] = tok[8:-1]
+        elif tok.startswith("[BPM:") and tok.endswith("]"):
+            metadata["bpm"] = tok[5:-1]
+        elif tok.startswith("[BASS_OFFSET:") and tok.endswith("]"):
+            metadata["bass_offset"] = int(tok[13:-1])
+        idx += 1
+
+    # The next 4 tokens must be: artist, downtune:N, tempo:N, start
+    head = all_tokens[idx:idx+4]
+    idx += 4
+    artist_token = head[0]
+    assert head[1].split(":")[0]=="downtune", "Expected downtune token, got: %s" % head[1]
+    assert head[2].split(":")[0]=="tempo",    "Expected tempo token, got: %s"    % head[2]
+    assert head[3]=="start",                  "Expected 'start' token, got: %s"  % head[3]
     initial_tempo = int(head[2].split(":")[1])
     pitch_shift = int(head[1].split(":")[1])
+
+    # Consume optional [TRACK_NAME:...] tokens immediately after 'start'
+    while idx < len(all_tokens) and all_tokens[idx].startswith("[TRACK_NAME:"):
+        tok = all_tokens[idx]
+        inner = tok[12:-1]  # strip '[TRACK_NAME:' and ']'
+        # Format: prefix:name  (prefix may not contain ':')
+        colon_pos = inner.find(":")
+        if colon_pos > 0:
+            prefix = inner[:colon_pos]
+            name = inner[colon_pos+1:]
+            track_names[prefix] = name
+        idx += 1
+
+    body = all_tokens[idx:]
+    # Retrieve bass_offset from metadata (0 if not present, maintains backward compat)
+    bass_offset = metadata.get("bass_offset", 0)
+
     verbose and print(artist_token, initial_tempo, pitch_shift)
+    verbose and print("Metadata:", metadata)
+    verbose and print("Track names:", track_names)
+    verbose and print("Bass offset:", bass_offset)
     
     ###########
     ## Instruments / Strings / Droptuning
@@ -1535,7 +1647,14 @@ def tokens2guitarpro(all_tokens, verbose=False):
             # In the middle of a measure
             #this_measure["tokens"].append(token)        
             t = token.split(":")
-            if(t[0]=="measure"):
+            if token.startswith("["):
+                # === EXTENSION: bracket tokens inside a measure ===
+                # [SECTION:name] tokens become measure_tokens so the GP builder can set markers.
+                # Any other unrecognized bracket tokens are silently skipped for forward-compat.
+                if token.startswith("[SECTION:") and token.endswith("]"):
+                    this_measure["measure_tokens"].append(token)
+                # All other [KEY:...] tokens inside the body are ignored (future extensions)
+            elif(t[0]=="measure"):
                 # measure token
                 # these are supposed to only be at the very beginning
                 # (but if they appear somewhere in the middle of the measure that might be ok?)
@@ -1683,6 +1802,7 @@ def tokens2guitarpro(all_tokens, verbose=False):
         new_track.channel.channel = i
         # im not sure about this, but seems to work ok
         new_track.channel.effectChannel = max(15,9+i) 
+        # Default names (may be overridden by [TRACK_NAME:...] tokens below)
         if(instrument=="drums"):
             new_track.channel.instrument = 0
             new_track.isPercussionTrack = True
@@ -1724,6 +1844,10 @@ def tokens2guitarpro(all_tokens, verbose=False):
             #new_track.settings.autoLetRing = True # this would be aesthetically nice when combining tracks, if I could turn "Stringed" on as well, which might be >GP5
         else:
             assert False, "Unsupported instrument"
+        # === EXTENSION: Track Name Preservation ===
+        # If the token file contained a [TRACK_NAME:prefix:name] token, restore it.
+        if instrument in track_names:
+            new_track.name = track_names[instrument]
         # Now set the strings
         if(instrument=="drums"):
             strings = ["C0","C0","C0","C0","C0","C0"]
@@ -1741,14 +1865,17 @@ def tokens2guitarpro(all_tokens, verbose=False):
                     strings = ['G3', 'D3', 'A2', 'D2', 'A1']
                 else:
                     strings = ['G3', 'D3', 'A2', 'E2', 'B1'] 
-                    # note: bass 5 string drop tuning isn't really supported, but here it is anyway
             elif(n_strings==6):
                 if drop:
                     strings = ['C4', 'G3', 'D3', 'A2', 'D2', 'A1']
                 else:
                     strings = ['C4', 'G3', 'D3', 'A2', 'E2', 'B1']
-                    # note: bass 6 string drop tuning isn't really supported, but here it is anyway
-            new_track.strings = convert_strings_for_pygp(strings, pitch_shift) 
+            # === EXTENSION: Bass Octave Fix ===
+            # bass_offset corrects for basses tuned at a non-standard octave relative
+            # to the global pitch_shift. Without this, the decoded GP5 bass notes are
+            # placed at the wrong octave (e.g., 14 semitones low for our b5_drop track).
+            # bass_offset is stored in the [BASS_OFFSET:N] metadata token during encoding.
+            new_track.strings = convert_strings_for_pygp(strings, pitch_shift + bass_offset)
         else:
             # treat other instruments like guitars
             drop = instrument_stringinfo[instrument]["drop_tuning"]
@@ -1794,7 +1921,13 @@ def tokens2guitarpro(all_tokens, verbose=False):
         # use the measure tokens to change the parameters of the header
         for measure_token in measure["measure_tokens"]:
             mt = measure_token.split(":")
-            if(mt[0]=="measure"): 
+            if measure_token.startswith("[SECTION:") and measure_token.endswith("]"):
+                # === EXTENSION: Section Label Token ===
+                # Reconstruct a Guitar Pro rehearsal mark from [SECTION:name] tokens.
+                section_name = measure_token[9:-1].replace("_", " ")
+                header.marker = gp.Marker(title=section_name,
+                                          color=gp.Color(r=255, g=0, b=0, a=1))
+            elif(mt[0]=="measure"): 
                 # all measure tokens begin like this
                 # If contradicting measure tokens exist, the later one will overwrite the previous one
                 if(mt[1]=="triplet_feel"):
@@ -2025,15 +2158,34 @@ def dadagp_encode(input_file, output_file, artist_token):
 
 # tokens --> guitarpro
 def dadagp_decode(input_file, output_file):
+    """Decode a DadaGP token file back into a Guitar Pro file.
+
+    Supports both the original v1.1 format and the extended metal-extensions
+    format with metadata tokens ([TITLE:], [ARTIST:], [BPM:], [BASS_OFFSET:],
+    [TRACK_NAME:], [SECTION:]).
+    """
     text_file = open(input_file, "r")
     tokens = text_file.read().split("\n")
+    text_file.close()
 
     # Convert the tokens to a song 
     song = tokens2guitarpro(tokens, verbose=True)
-    # Appears at the top of the GP score
-    song.artist = tokens[0]
-    song.album = 'Generated by DadaGP'
-    song.title = "untitled"
+
+    # === EXTENSION: Restore song metadata from [TITLE:] / [ARTIST:] tokens ===
+    # Fall back to artist_token (original DadaGP behaviour) when metadata missing.
+    metadata_title = None
+    metadata_artist = None
+    for tok in tokens:
+        if tok.startswith("[TITLE:") and tok.endswith("]"):
+            metadata_title = tok[7:-1]
+        elif tok.startswith("[ARTIST:") and tok.endswith("]"):
+            metadata_artist = tok[8:-1]
+        elif not tok.startswith("["):
+            break  # artist_token (first non-bracket line)
+
+    song.title  = metadata_title  if metadata_title  else "untitled"
+    song.artist = metadata_artist if metadata_artist else tokens[0]
+    song.album  = 'Generated by DadaGP metal-extensions'
     guitarpro.write(song, output_file) # GP file transcoded into tokens and back again
 
 
