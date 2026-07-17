@@ -1,6 +1,6 @@
 import unittest
 
-from dadagp import parse_decode_metadata
+from dadagp import parse_decode_metadata, resolve_initial_tempo
 
 
 class DecodeMetadataTest(unittest.TestCase):
@@ -40,6 +40,16 @@ class DecodeMetadataTest(unittest.TestCase):
 
         self.assertEqual(metadata["title"], "Metadata Only Title")
         self.assertEqual(metadata["artist"], "source_artist_token")
+
+
+class DecodeTempoTest(unittest.TestCase):
+    def test_exact_bpm_metadata_overrides_rounded_legacy_tempo(self):
+        self.assertEqual(resolve_initial_tempo("97", 100), 97)
+
+    def test_missing_or_invalid_bpm_preserves_legacy_tempo(self):
+        self.assertEqual(resolve_initial_tempo(None, 100), 100)
+        self.assertEqual(resolve_initial_tempo("not-a-number", 100), 100)
+        self.assertEqual(resolve_initial_tempo("0", 100), 100)
 
 
 if __name__ == "__main__":

@@ -347,6 +347,15 @@ def get_artist(file):
 def roundtempo(tempo):
     return round(tempo/10)*10
 
+
+def resolve_initial_tempo(exact_bpm, legacy_tempo):
+    """Prefer exact extension BPM while preserving legacy decode behavior."""
+    try:
+        bpm = int(exact_bpm)
+    except (TypeError, ValueError):
+        return legacy_tempo
+    return bpm if bpm > 0 else legacy_tempo
+
 # It's important, for resolving token contradictions, that I use the the format measure_name[_params]
 # because there should only be one each of "measure_name" token per measure.
 # Track previous time signature across measures for change detection
@@ -1459,7 +1468,8 @@ def tokens2guitarpro(all_tokens, verbose=False):
     assert head[1].split(":")[0]=="downtune", "Expected downtune token, got: %s" % head[1]
     assert head[2].split(":")[0]=="tempo",    "Expected tempo token, got: %s"    % head[2]
     assert head[3]=="start",                  "Expected 'start' token, got: %s"  % head[3]
-    initial_tempo = int(head[2].split(":")[1])
+    legacy_tempo = int(head[2].split(":")[1])
+    initial_tempo = resolve_initial_tempo(metadata.get("bpm"), legacy_tempo)
     pitch_shift = int(head[1].split(":")[1])
 
     # Consume optional [TRACK_NAME:...] tokens immediately after 'start'
