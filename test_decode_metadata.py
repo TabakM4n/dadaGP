@@ -1,6 +1,6 @@
 import unittest
 
-from dadagp import parse_decode_metadata, resolve_initial_tempo
+from dadagp import parse_decode_metadata, resolve_bass_offset, resolve_initial_tempo
 
 
 class DecodeMetadataTest(unittest.TestCase):
@@ -50,6 +50,17 @@ class DecodeTempoTest(unittest.TestCase):
         self.assertEqual(resolve_initial_tempo(None, 100), 100)
         self.assertEqual(resolve_initial_tempo("not-a-number", 100), 100)
         self.assertEqual(resolve_initial_tempo("0", 100), 100)
+
+
+class DecodeBassOffsetTest(unittest.TestCase):
+    def test_valid_offsets_are_preserved(self):
+        self.assertEqual(resolve_bass_offset("12"), 12)
+        self.assertEqual(resolve_bass_offset("-12"), -12)
+
+    def test_missing_or_invalid_offset_defaults_to_zero(self):
+        self.assertEqual(resolve_bass_offset(None), 0)
+        self.assertEqual(resolve_bass_offset("not-a-number"), 0)
+        self.assertEqual(resolve_bass_offset(""), 0)
 
 
 if __name__ == "__main__":

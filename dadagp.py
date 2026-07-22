@@ -356,6 +356,14 @@ def resolve_initial_tempo(exact_bpm, legacy_tempo):
         return legacy_tempo
     return bpm if bpm > 0 else legacy_tempo
 
+
+def resolve_bass_offset(raw_offset):
+    """Return a valid bass tuning offset, defaulting malformed metadata to 0."""
+    try:
+        return int(raw_offset)
+    except (TypeError, ValueError):
+        return 0
+
 # It's important, for resolving token contradictions, that I use the the format measure_name[_params]
 # because there should only be one each of "measure_name" token per measure.
 # Track previous time signature across measures for change detection
@@ -1458,7 +1466,7 @@ def tokens2guitarpro(all_tokens, verbose=False):
         elif tok.startswith("[BPM:") and tok.endswith("]"):
             metadata["bpm"] = tok[5:-1]
         elif tok.startswith("[BASS_OFFSET:") and tok.endswith("]"):
-            metadata["bass_offset"] = int(tok[13:-1])
+            metadata["bass_offset"] = resolve_bass_offset(tok[13:-1])
         idx += 1
 
     # The next 4 tokens must be: artist, downtune:N, tempo:N, start
