@@ -348,21 +348,32 @@ def roundtempo(tempo):
     return round(tempo/10)*10
 
 
+GP5_MIN_TEMPO = 1
+GP5_MAX_TEMPO = (1 << 31) - 1
+MIN_MIDI_OFFSET = -127
+MAX_MIDI_OFFSET = 127
+
+
 def resolve_initial_tempo(exact_bpm, legacy_tempo):
-    """Prefer exact extension BPM while preserving legacy decode behavior."""
+    """Prefer a GP5-serializable exact BPM, otherwise keep the legacy tempo."""
     try:
         bpm = int(exact_bpm)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return legacy_tempo
-    return bpm if bpm > 0 else legacy_tempo
+    if GP5_MIN_TEMPO <= bpm <= GP5_MAX_TEMPO:
+        return bpm
+    return legacy_tempo
 
 
 def resolve_bass_offset(raw_offset):
     """Return a valid bass tuning offset, defaulting malformed metadata to 0."""
     try:
-        return int(raw_offset)
-    except (TypeError, ValueError):
+        offset = int(raw_offset)
+    except (TypeError, ValueError, OverflowError):
         return 0
+    if MIN_MIDI_OFFSET <= offset <= MAX_MIDI_OFFSET:
+        return offset
+    return 0
 
 # It's important, for resolving token contradictions, that I use the the format measure_name[_params]
 # because there should only be one each of "measure_name" token per measure.
