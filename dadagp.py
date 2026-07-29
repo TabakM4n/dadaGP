@@ -347,6 +347,34 @@ def get_artist(file):
 def roundtempo(tempo):
     return round(tempo/10)*10
 
+
+GP5_MIN_TEMPO = 1
+GP5_MAX_TEMPO = (1 << 31) - 1
+MIN_MIDI_OFFSET = -127
+MAX_MIDI_OFFSET = 127
+
+
+def resolve_initial_tempo(exact_bpm, legacy_tempo):
+    """Prefer a GP5-serializable exact BPM, otherwise keep the legacy tempo."""
+    try:
+        bpm = int(exact_bpm)
+    except (TypeError, ValueError, OverflowError):
+        return legacy_tempo
+    if GP5_MIN_TEMPO <= bpm <= GP5_MAX_TEMPO:
+        return bpm
+    return legacy_tempo
+
+
+def resolve_bass_offset(raw_offset):
+    """Return a valid bass tuning offset, defaulting malformed metadata to 0."""
+    try:
+        offset = int(raw_offset)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if MIN_MIDI_OFFSET <= offset <= MAX_MIDI_OFFSET:
+        return offset
+    return 0
+
 # It's important, for resolving token contradictions, that I use the the format measure_name[_params]
 # because there should only be one each of "measure_name" token per measure.
 # Track previous time signature across measures for change detection
@@ -1449,7 +1477,7 @@ def tokens2guitarpro(all_tokens, verbose=False):
         elif tok.startswith("[BPM:") and tok.endswith("]"):
             metadata["bpm"] = tok[5:-1]
         elif tok.startswith("[BASS_OFFSET:") and tok.endswith("]"):
-            metadata["bass_offset"] = int(tok[13:-1])
+            metadata["bass_offset"] = resolve_bass_offset(tok[13:-1])
         idx += 1
 
     # The next 4 tokens must be: artist, downtune:N, tempo:N, start
@@ -1459,7 +1487,8 @@ def tokens2guitarpro(all_tokens, verbose=False):
     assert head[1].split(":")[0]=="downtune", "Expected downtune token, got: %s" % head[1]
     assert head[2].split(":")[0]=="tempo",    "Expected tempo token, got: %s"    % head[2]
     assert head[3]=="start",                  "Expected 'start' token, got: %s"  % head[3]
-    initial_tempo = int(head[2].split(":")[1])
+    legacy_tempo = int(head[2].split(":")[1])
+    initial_tempo = resolve_initial_tempo(metadata.get("bpm"), legacy_tempo)
     pitch_shift = int(head[1].split(":")[1])
 
     # Consume optional [TRACK_NAME:...] tokens immediately after 'start'

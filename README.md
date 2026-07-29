@@ -100,7 +100,7 @@ start
 ...
 ```
 
-`[TITLE:]` and `[ARTIST:]` are restored in the decoded GP5. `[BPM:]` records the exact (non-rounded) tempo from the source. `[BASS_OFFSET:]` is only emitted when the bass octave differs from standard.
+`[TITLE:]`, `[ARTIST:]`, and the exact (non-rounded) `[BPM:]` tempo are restored in the decoded GP5. `[BASS_OFFSET:]` is only emitted when the bass octave differs from standard.
 
 ### New Token Reference
 
@@ -124,4 +124,3 @@ start
   url = {https://archives.ismir.net/ismir2021/paper/000076.pdf},
   year = {2021}
 }
-
