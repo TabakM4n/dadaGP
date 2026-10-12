@@ -17,7 +17,7 @@
 ## Functins for SPLITTING / CONVERTING v1.0 => v1.1
 #############
 
-# Splits a number into unique powers of two which can be summed into that number
+# Splits a number into supported powers of two; repeats 16384 for long waits.
 # 9 => [8,1]
 # 7 => [4,2,1]
 # 1 => [1]
@@ -25,22 +25,24 @@
 # 1023 => [512,256,128,64,32,16,8,4,2,1]
 # 16384 => [16384]
 
-import math
+# Keep split waits inside the supported vocabulary (powers of two up to 16384).
+MAX_WAIT_POWER = 16384
 
 def binarization(n):
-    l = []
-    for i in range(1,20):
-        p = int(math.pow(2,i))
-        r = n%(p)
-        n-=r
-        if(r>0): 
-            l.append(r)
-    l.reverse()
-    return l
+    parts = []
+    while n >= MAX_WAIT_POWER:
+        parts.append(MAX_WAIT_POWER)
+        n -= MAX_WAIT_POWER
+    for bit in range(MAX_WAIT_POWER.bit_length() - 2, -1, -1):
+        power = 1 << bit
+        if n >= power:
+            parts.append(power)
+            n -= power
+    return parts
 
 # List of supported tokens
 # Includes the 18 most common wait tokens which represent 99.7% of wait tokens
-# Also inludes powers of 2 which are summed to represent any wait amount up to 2^15 (~35 beats long) 
+# Also includes powers of 2 up to 16384; longer waits repeat the largest token.
 wait_token_list2 = ['wait:1920', 'wait:16', 'wait:4096', 'wait:240', 'wait:3840', 'wait:512', 'wait:2048', 'wait:960', 'wait:64', 'wait:2880', 'wait:320', 'wait:256', 'wait:32', 'wait:16384', 'wait:480', 'wait:8', 'wait:1024', 'wait:640', 'wait:1', 'wait:360', 'wait:192', 'wait:128', 'wait:120', 'wait:40', 'wait:60', 'wait:2', 'wait:8192', 'wait:4', 'wait:1440', 'wait:80', 'wait:180', 'wait:720', 'wait:160']
 def split_wait_token(token):
     if(token in wait_token_list2):
