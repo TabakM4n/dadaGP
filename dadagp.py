@@ -258,7 +258,7 @@ def is_b5drop(strdiff):
     return strdiff == [-5, -5, -7, -5] or strdiff == [-5, -5, -5, -7]
 
 # Returns a string describing the tuning type
-def get_tuning_type(instrument_group, strings):
+def get_tuning_type(instrument_group, strings, verbose=False):
     strnums = [noteNumber(s)[3] for s in strings]
     strdiff = list(diff(strnums))
     if(instrument_group=="bass"):
@@ -384,7 +384,7 @@ def reset_measure_state():
     """Reset encoder state between songs."""
     _prev_time_sig[0] = None
 
-def get_measure_tokens(measure):
+def get_measure_tokens(measure, verbose=False):
     """Return the list of structural tokens that begin a measure.
 
     Includes the mandatory ``new_measure`` token plus optional tokens for
@@ -496,7 +496,7 @@ def beat_effect_list(effect):
 
 # take a list of bfx tokens and modify the beateffect
 # give it beat.effect and a list
-def tokens_to_beat_effect(effect, bfx_tokens):
+def tokens_to_beat_effect(effect, bfx_tokens, verbose=False):
     for token in bfx_tokens:
         # DadaGP v1.1 begin ====>
         token = unsplit_fx(token) # convert v1.1 format (dict with param tokens) to v1.0 (long string)
@@ -661,7 +661,7 @@ def note_effect_list(effect):
 
 # take a list of nfx tokens and modify the note effect
 # give it note and a list
-def tokens_to_note_effect(note, nfx_tokens):
+def tokens_to_note_effect(note, nfx_tokens, verbose=False):
     effect = note.effect
     for token in nfx_tokens:
         # DadaGP v1.1 begin ====>
@@ -759,7 +759,7 @@ def tokens_to_note_effect(note, nfx_tokens):
 # Return the instrument token prefix for notes
 # If there are multiple drums tracks, they will all return the same prefix "drums"
 # the same goes for leads and pads
-def get_instrument_token_prefix(track, tracks_by_group):
+def get_instrument_token_prefix(track, tracks_by_group, verbose=False):
     if(track in tracks_by_group["drums"]):
         return "drums"
     elif(track in tracks_by_group["bass"]):
@@ -1127,7 +1127,7 @@ def guitarpro2tokens(song, artist, verbose=False):
         elif(group_name=="pads" or group_name=="leads"):
             assert is_good_guitar_tuning(strings), "Error: Track %s has unsupported pads/leads tuning: %s" % (t," ".join(strings))
             downtunages.append(guitar_downtunage(strings))
-        tuning_types[t] = get_tuning_type(group_name,strings)
+        tuning_types[t] = get_tuning_type(group_name, strings, verbose=verbose)
 
     verbose and print("Downtuning scheme of guitar/bass/pads/leads tracks:", downtunages)
     allthesame = all([x%12==downtunages[0]%12 for x in downtunages])
@@ -1190,7 +1190,7 @@ def guitarpro2tokens(song, artist, verbose=False):
     for t, track in enumerate(song.tracks):
         if get_instrument_group(track) == "remove":
             continue
-        prefix = get_instrument_token_prefix(track, tracks_by_group)
+        prefix = get_instrument_token_prefix(track, tracks_by_group, verbose=verbose)
         if prefix and track.name:
             safe_name = track.name.replace("\n", " ").strip()
             track_name_tokens.append("[TRACK_NAME:%s:%s]" % (prefix, safe_name))
@@ -1218,11 +1218,11 @@ def guitarpro2tokens(song, artist, verbose=False):
         events_this_measure = [] # just this measures' events
         # Measure event is always the first event in the list:
         # (hack: setting track to -1 ensures the measure tokens will come before the note tokens when sorting0
-        event = {"type": "measure", "track": -1, "start": measure.start, "tokens": get_measure_tokens(measure)}
+        event = {"type": "measure", "track": -1, "start": measure.start, "tokens": get_measure_tokens(measure, verbose=verbose)}
         events_this_measure.append(event)
         # tracks in measures
         for t, track in enumerate(song.tracks):
-            instrument_prefix = get_instrument_token_prefix(track, tracks_by_group)
+            instrument_prefix = get_instrument_token_prefix(track, tracks_by_group, verbose=verbose)
             measure = track.measures[m]
             # voices in tracks (i guess tracks have 2 voices? i will just combine them into one voice)
             for v, voice in enumerate(measure.voices):
@@ -2127,7 +2127,7 @@ def tokens2guitarpro(all_tokens, verbose=False):
 
                     bfx_tokens = beat["bfx"]
                     ## Modify Beat.Effect with beat effect tokens
-                    tokens_to_beat_effect(gp_beat.effect, bfx_tokens)
+                    tokens_to_beat_effect(gp_beat.effect, bfx_tokens, verbose=verbose)
 
                     gp_beat.start = clock
                     ## NOTES
@@ -2191,7 +2191,7 @@ def tokens2guitarpro(all_tokens, verbose=False):
                             gp_note.type = gp.NoteType(1)
                             nfx = note["nfx"]
                             ## Add nfx to gp_note
-                            tokens_to_note_effect(gp_note, nfx)
+                            tokens_to_note_effect(gp_note, nfx, verbose=verbose)
                             # Add the note to the list of notes
                             gp_beat.notes.append(gp_note)
                     # Okay we're done adding notes (if there were any)
